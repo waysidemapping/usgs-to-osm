@@ -21,11 +21,11 @@ export function clearDirectory(dir) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
-export function getString(url) {
-  return get(url).then(result => result.toString());
+export function getString(url, opts) {
+  return get(url, opts).then(result => result?.toString());
 }
 
-export function get(url) {
+export function get(url, opts) {
 
   const options = {
     method: 'GET',
@@ -35,14 +35,18 @@ export function get(url) {
   return new Promise((resolve, reject) => {
     const req = request(url, options, (res) => {
       if (res.statusCode < 200 || res.statusCode > 299) {
-        return reject(new Error(`HTTP status code ${res.statusCode}`))
+        if (opts?.returnNullOnBadStatus) {
+          resolve(null)
+        } else {
+          return reject(new Error(`HTTP status code ${res.statusCode}`))
+        }
+      } else {
+        const body = []
+        res.on('data', (chunk) => body.push(chunk))
+        res.on('end', () => {
+          resolve(Buffer.concat(body))
+        })
       }
-
-      const body = []
-      res.on('data', (chunk) => body.push(chunk))
-      res.on('end', () => {
-        resolve(Buffer.concat(body))
-      })
     })
 
     req.on('error', (err) => {

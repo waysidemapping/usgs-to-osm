@@ -3,7 +3,8 @@ import { getString, clearDirectory, scratchDir } from '../utils.js';
 
 // https://api.water.noaa.gov/nwps/v1/docs/#/
 
-//clearDirectory(scratchDir + 'nwps/full/');
+// Don't delete existing since these are time-intensive to query and the data we care about doesn't change much
+// clearDirectory(scratchDir + 'nwps/full/');
 
 console.log('Fetching National Water Prediction Service stations. This may take quite awhile…');
 
@@ -18,8 +19,13 @@ for (let i in indexGauges) {
 
     const remotePath = `https://api.water.noaa.gov/nwps/v1/gauges/${id}`;
     console.log(`Fetching: ${remotePath}`);
-    let jsonString = await getString(remotePath);
+    let jsonString = await getString(remotePath, { returnNullOnBadStatus: true });
 
-    console.log(`Writing data to '${localPath}'`);
-    writeFileSync(localPath, jsonString);
+    if (jsonString) {
+        console.log(`Writing data to '${localPath}'`);
+        writeFileSync(localPath, jsonString);
+    } else {
+        console.log(`No string returned`);
+    }
+
 }
