@@ -114,13 +114,12 @@ export const lifecyclePrefixes = ['', 'disused:', 'abandoned:', 'ruins:', 'demol
 
 export async function fetchOsmData(id, queryInner) {
 
-  // do not limit to the US since some sites are in Canada
   const query = `
-  [out:json][timeout:60];
+  [out:json][timeout:300];
   (
   ${queryInner}
   );
-  (._;>;); out meta;
+  (._;); out meta;
   `;
 
   clearDirectory(scratchDir + `osm/${id}/`);
@@ -144,17 +143,31 @@ export function locHash(obj) {
 
 export function osmChangeXmlForFeatures(features) {
   function xmlForFeature(feature) {
-      let xml = `<node id="${feature.id}" version="${feature.version}" lat="${feature.lat}" lon="${feature.lon}">\n`;
-      for (let key in feature.tags) {
-          xml += `<tag k="${key}" v="${feature.tags[key].replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;')}"/>\n`;
-      }
+    let xml = '';
+    let tagsString = '';
+    for (let key in feature.tags) {
+      tagsString += `<tag k="${key}" v="${feature.tags[key].replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;')}"/>\n`;
+    }
+    if (feature.type === 'node') {
+      xml = `<node id="${feature.id}" version="${feature.version}" lat="${feature.lat}" lon="${feature.lon}">\n`;
+      xml += tagsString;
       xml += '</node>\n';
-      return xml;
+    } else if (feature.type === 'way') {
+      xml = `<way id="${feature.id}" version="${feature.version}">\n`;
+      xml += tagsString;
+      for (let i in feature.nodes) {
+        xml += `<nd ref="${feature.nodes[i]}"/>\n`;
+      }
+      xml += '</way>\n';
+    } else {
+      console.log(`⚠️ Skipping change XML for feature ${feature.id} with unknown type ${feature.type}`);
+    }
+    return xml;
   }
   
   let xml = `<osmChange version="0.6">\n<modify>\n`;
   features.forEach(function(feature) {
-      xml += xmlForFeature(feature);
+    xml += xmlForFeature(feature);
   });
   xml += `</modify>\n</osmChange>\n`;
   return xml;
@@ -165,4 +178,26 @@ export function geoJsonForFeatures(features) {
       "type": "FeatureCollection",
       "features": features
   };
+}
+
+export function tagDiff(before, after) {
+    let added = {},
+        deleted = {};
+    for (var key in before) {
+        if (!after[key]) {
+            deleted[key] = before[key];
+        } else if (before[key] !== after[key]) {
+            deleted[key] = before[key];
+            added[key] = after[key];
+        }
+    }
+    for (var key in after) {
+        if (!before[key]) {
+            added[key] = after[key];
+        }
+    }
+    return {
+        added: added,
+        deleted: deleted
+    };
 }

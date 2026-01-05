@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'fs';
-import { clearDirectory, locHash, osmChangeXmlForFeatures, geoJsonForFeatures, scratchDir } from '../utils.js';
+import { clearDirectory, lifecyclePrefixes, locHash, osmChangeXmlForFeatures, geoJsonForFeatures, scratchDir, tagDiff } from '../utils.js';
 
 clearDirectory(scratchDir + 'usgs/diffed/');
 clearDirectory(scratchDir + 'usgs/diffed/modified/bystate/');
@@ -69,26 +69,32 @@ const webcamKeys = [
     'contact:webcam:15',
 ];
 
-let keysToAddIfMissing = [...new Set(Object.values(conversionMap).map(obj => Object.keys(obj.tags)).flat())];
-keysToAddIfMissing = keysToAddIfMissing.concat([
-    'depth',
-    'ele',
-    'ele:accuracy',
-    'ele:datum',
-    'name',
-    'official_name',
-    'operator',
-    'operator:type',
-    'operator:short',
-    'operator:wikidata',
-    'ref',
-    'shef:location_id',
-    'start_date',
-    'website',
-    'website:1',
-]);
+let keysToAddIfMissing = {
+    'depth':{},
+    'ele':{},
+    'ele:accuracy':{ ifAlsoAdding: 'ele' },
+    'ele:datum':{ ifAlsoAdding: 'ele' },
+    'name':{},
+    'official_name':{},
+    'operator':{},
+    'operator:type':{},
+    'operator:short':{},
+    'operator:wikidata':{},
+    'ref':{},
+    'shef:location_id':{},
+    'start_date':{},
+    'website':{},
+    'website:1':{}
+};
+lifecyclePrefixes.forEach(prefix => keysToAddIfMissing[`${prefix}man_made`] = {});
+[...new Set(Object.values(conversionMap).map(obj => Object.keys(obj.tags)).flat())].forEach(key => keysToAddIfMissing[key] = {});
 
-const keysToOverride = ['official_name'];
+const featureTypeTags = lifecyclePrefixes.map(prefix => `${prefix}man_made`);
+
+const keysToRemoveIfNotSpecified = featureTypeTags;
+
+const keysToOverwrite = featureTypeTags
+    .concat(['official_name']);
 
 const osm = JSON.parse(readFileSync(scratchDir + 'osm/usgs/all.json'));
 const usgs = JSON.parse(readFileSync(scratchDir + 'usgs/formatted/all.geojson'));
@@ -105,12 +111,14 @@ osm.elements.forEach(function(feature) {
         if (osmByRef[feature.tags.ref]) console.log(`Duplicate OSM elements for "ref=${feature.tags.ref}": ${osmByRef[feature.tags.ref].id} and ${feature.id}`);
         osmByRef[feature.tags.ref] = feature;
     } else {
-        console.log(`Missing "ref" for https://openstreetmap.org/node/${feature.id}`);
+        console.log(`Missing "ref" for https://openstreetmap.org/${feature.type}/${feature.id}`);
     }
 
-    let loc = locHash(feature);
-    if (osmByLoc[loc]) console.log(`OSM elements have the same location: ${osmByLoc[loc].id} and ${feature.id}`);
-    osmByLoc[loc] = feature;
+    if (feature.type === 'node') {
+        let loc = locHash(feature);
+        if (osmByLoc[loc]) console.log(`OSM elements have the same location: ${osmByLoc[loc].id} and ${feature.id}`);
+        osmByLoc[loc] = feature;
+    }
 });
 
 let usgsByRef = {};
@@ -120,7 +128,6 @@ usgs.features.forEach(function(feature) {
 });
 
 let updated = [];
-let updatedByState = {};
 let usgsOnlyByState = {};
 
 let osmOnlyFeatures = [];
@@ -133,23 +140,6 @@ let tagsDeleted = {};
 let addedMissingTags = 0;
 let overwroteIncorrectTags = 0;
 let deletedTagCount = 0;
-
-function tagDiff(before, after) {
-    let returner = {
-        added: [],
-        modified: [],
-        deleted: []
-    };
-    for (var key in before) {
-        if (!after[key]) returner.deleted.push(key);
-        else if (before[key] !== after[key]) returner.modified.push(key);
-    }
-    for (var key in after) {
-        if (!before[key]) returner.added.push(key);
-    }
-    returner.total = [...returner.added, ...returner.modified, ...returner.deleted];
-    return returner;
-}
 
 function cleanupWebcamValues(feature, nwisValues) {
     const beforeWebcamTags = {};
@@ -167,7 +157,6 @@ function cleanupWebcamValues(feature, nwisValues) {
     webcamKeys.forEach(function(key) {
         if (feature.tags[key]) afterWebcamTags[key] = feature.tags[key];
     });
-    return tagDiff(beforeWebcamTags, afterWebcamTags);
 }
 
 function addWebcamValue(feature, value) {
@@ -177,61 +166,83 @@ function addWebcamValue(feature, value) {
     feature.tags[targetKey] = value;
 }
 
+let osmByRefByState = {};
+
 for (let ref in osmByRef) {
     let osmFeature = osmByRef[ref];
     let latest = usgsByRef[ref];
     if (latest) {
-        let didUpdate = false;
-
-        function processDiff(diff) {
-            if (diff.total.length) {
-                didUpdate = true;
-                diff.added.forEach(key => tagsAdded[key] = true);
-                diff.modified.forEach(key => tagsModified[key] = true);
-                diff.deleted.forEach(key => tagsDeleted[key] = true);
-                addedMissingTags += diff.added.length;
-                overwroteIncorrectTags += diff.modified.length;
-                deletedTagCount += diff.deleted.length;
-            }
-        }
-
-        let nwisWebcamValues = webcamKeys.map(key => latest.properties[key]).filter(val => val);
-        processDiff(cleanupWebcamValues(osmFeature, nwisWebcamValues));
-        
-        for (let i in keysToAddIfMissing) {
-            let key = keysToAddIfMissing[i];
-            // some sites don't have a name so don't add one
-            if (key === 'name' && osmFeature.tags.noname === 'yes') continue;
-            if (latest.properties[key] && !osmFeature.tags[key]) {
-                tagsAdded[key] = true;
-                osmFeature.tags[key] = latest.properties[key];
-                addedMissingTags += 1;
-                didUpdate = true;
-            }
-        }
-        for (let i in keysToOverride) {
-            let key = keysToOverride[i];
-            if (osmFeature.tags[key] && latest.properties[key] &&
-                osmFeature.tags[key] !== latest.properties[key]) {
-                console.log(`Replacing ${key} on ${osmFeature.tags.name}:\n-${osmFeature.tags[key]}\n+${latest.properties[key]}\n`);
-                tagsModified[key] = true;
-                osmFeature.tags[key] = latest.properties[key];
-                overwroteIncorrectTags += 1;
-                didUpdate = true;
-            }
-        }
-        if (didUpdate) {
-            let key = latest.state ? latest.state : '_nostate';
-            if (regionsByState[key]) key = regionsByState[key];
-            if (!updatedByState[key]) updatedByState[key] = [];
-            updatedByState[key].push(osmFeature);
-            updated.push(osmFeature);
-        }
+        let key = latest.state ? latest.state : '_nostate';
+        //if (regionsByState[key]) key = regionsByState[key];
+        if (!osmByRefByState[key]) osmByRefByState[key] = {};
+        osmByRefByState[key][ref] = osmFeature;
     } else {
         // ignore inactive features like `disused:man_made=monitoring_station`
         if (osmFeature.tags.man_made === 'monitoring_station') {
             osmOnlyFeatures.push(osmFeature);
         }
+    }
+}
+
+for (let state in osmByRefByState) {
+    let updatedInState = [];
+    for (let ref in osmByRefByState[state]) {
+        let osmFeature = osmByRefByState[state][ref];
+        let latest = usgsByRef[ref];
+
+        let beforeTags = Object.assign({}, osmFeature.tags);
+
+        let nwisWebcamValues = webcamKeys.map(key => latest.properties[key]).filter(val => val);
+        cleanupWebcamValues(osmFeature, nwisWebcamValues);
+        
+        for (let key in keysToAddIfMissing) {
+            
+            // If a feature is marked as not having a name, don't add one
+            if (key === 'name' && osmFeature.tags.noname === 'yes') continue;
+            
+            if (!osmFeature.tags[key] && latest.properties[key]) {
+                let opts = keysToAddIfMissing[key];
+                if (opts.ifAlsoAdding && (beforeTags[opts.ifAlsoAdding] || !latest.properties[opts.ifAlsoAdding])) {
+                    continue;
+                }
+                osmFeature.tags[key] = latest.properties[key];
+            }
+        }
+        for (let i in keysToOverwrite) {
+            let key = keysToOverwrite[i];
+            if (osmFeature.tags[key] && latest.properties[key] &&
+                osmFeature.tags[key] !== latest.properties[key]) {
+                osmFeature.tags[key] = latest.properties[key];
+            }
+        }
+        for (let i in keysToRemoveIfNotSpecified) {
+            let key = keysToRemoveIfNotSpecified[i];
+            if (osmFeature.tags[key] && !latest.properties[key]) {
+                delete osmFeature.tags[key];
+            }
+        }
+
+        let diff = tagDiff(beforeTags, osmFeature.tags);
+
+        if (Object.keys(diff.added).length || Object.keys(diff.deleted).length) {
+            if (updatedInState.length === 0) {
+                console.log(`\n-------------------------------------`);
+                console.log(`Modified features in ${state}:`);
+            }
+            console.log(`  ${osmFeature.tags.name} (${osmFeature.tags.ref}) https://openstreetmap.org/${osmFeature.type}/${osmFeature.id}`);
+            for (let key in diff.deleted) {
+                console.log(`    - ${key}=${diff.deleted[key]}`);
+            }
+            for (let key in diff.added) {
+                console.log(`    + ${key}=${diff.added[key]}`);
+            }
+            updatedInState.push(osmFeature);
+            updated.push(osmFeature);
+        }
+    }
+    if (updatedInState.length) {
+        writeFileSync(scratchDir + 'usgs/diffed/modified/bystate/' + state + '.osc', osmChangeXmlForFeatures(updatedInState));
+        console.log(`${updatedInState.length} total features modified in ${state}`);
     }
 }
 
@@ -249,7 +260,7 @@ for (let ref in usgsByRef) {
 
         let key = usgsFeature.state ? usgsFeature.state : '_nostate';
         delete usgsFeature.state;
-        if (regionsByState[key]) key = regionsByState[key];
+        //if (regionsByState[key]) key = regionsByState[key];
         if (!usgsOnlyByState[key]) usgsOnlyByState[key] = [];
         usgsOnlyByState[key].push(usgsFeature);
         usgsOnlyFeatures.push(usgsFeature);
@@ -257,16 +268,12 @@ for (let ref in usgsByRef) {
 }
 
 console.log('Modified, needs upload: ' + updated.length);
-if (addedMissingTags > 0) console.log(`  Added ${addedMissingTags} tags: ` + Object.keys(tagsAdded).join(', '));
-if (overwroteIncorrectTags > 0) console.log(`  Overwrote ${overwroteIncorrectTags} tags: ` + Object.keys(tagsModified).join(', '));
-if (deletedTagCount > 0) console.log(`  Deleted ${deletedTagCount} tags: ` + Object.keys(tagsDeleted).join(', '));
+// if (addedMissingTags > 0) console.log(`  Added ${addedMissingTags} tags: ` + Object.keys(tagsAdded).join(', '));
+// if (overwroteIncorrectTags > 0) console.log(`  Overwrote ${overwroteIncorrectTags} tags: ` + Object.keys(tagsModified).join(', '));
+// if (deletedTagCount > 0) console.log(`  Deleted ${deletedTagCount} tags: ` + Object.keys(tagsDeleted).join(', '));
 
 
-for (let state in updatedByState) {
-    writeFileSync(scratchDir + 'usgs/diffed/modified/bystate/' + state + '.osc', osmChangeXmlForFeatures(updatedByState[state]));
-    console.log("  " + state + ": " + updatedByState[state].length);
-}
-writeFileSync(scratchDir + 'usgs/diffed/modified/all.osc', osmChangeXmlForFeatures(updated));
+//writeFileSync(scratchDir + 'usgs/diffed/modified/all.osc', osmChangeXmlForFeatures(updated));
 
 console.log('In USGS but not OSM, needs review and upload: ' + usgsOnlyFeatures.length);
 
@@ -274,7 +281,7 @@ for (let state in usgsOnlyByState) {
     writeFileSync(scratchDir + 'usgs/diffed/usgs_only/bystate/' + state + '.geojson', JSON.stringify(geoJsonForFeatures(usgsOnlyByState[state]), null, 2));
     console.log("  " + state + ": " + usgsOnlyByState[state].length);
 }
-writeFileSync(scratchDir + 'usgs/diffed/usgs_only/all.geojson', JSON.stringify(geoJsonForFeatures(usgsOnlyFeatures), null, 2));
+//writeFileSync(scratchDir + 'usgs/diffed/usgs_only/all.geojson', JSON.stringify(geoJsonForFeatures(usgsOnlyFeatures), null, 2));
 
 writeFileSync(scratchDir + 'usgs/diffed/osm_only/all.json', JSON.stringify(osmOnlyFeatures, null, 2));
 

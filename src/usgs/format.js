@@ -355,6 +355,13 @@ let featuresByState = {};
 Object.values(allCurrentItems).forEach(item => {
     if (!item.dec_lat_va || !item.dec_long_va) return;
 
+    if (Object.keys(item.tags).length > 0) {
+        item.tags['man_made'] = "monitoring_station";
+    } else {
+        // assume station is disused if it's not monitoring anything
+        item.tags['disused:man_made'] = "monitoring_station";
+    }
+
     let cameras = camerasByRef[item.site_no];
     if (cameras) {
         // USGS puts stockade bridge webcams on a distant NWIS site since there is now NWIS at the actual location. Ignore these.
@@ -376,11 +383,12 @@ Object.values(allCurrentItems).forEach(item => {
     if (item.alt_va && ['NAVD88', 'NGVD29', 'LMSL', 'COE1912', "PRVD02", "IGLD"].includes(item.alt_datum_cd)) {
         let eleFeet = parseFloat(item.alt_va.trim());
         let accuracyFeet = parseFloat(item.alt_acy_va.trim());
-        // USGS sometimes has altitude set to 0 ft for random inland sites, so don't trust it unless the site it tidal
-        if ((eleFeet || (eleFeet === 0 && item.tags.tidal === 'yes')) &&
-            !isNaN(eleFeet) && eleFeet < 20000 && eleFeet > -280 &&
-            (accuracyFeet || accuracyFeet === 0) &&
-            !isNaN(accuracyFeet) && accuracyFeet < 200 && accuracyFeet >= 0) {
+        // USGS sometimes has altitude set to near zero for random inland sites, so don't trust it unless the site is tidal.
+        // Note: this will break in rare instances where ele is below sea level (e.g. Death Valley)
+        if (
+            (!isNaN(eleFeet) && (eleFeet >= 10 || item.tags.tidal === 'yes') && eleFeet < 20000)
+            && (!isNaN(accuracyFeet) && accuracyFeet < 200 && accuracyFeet >= 0)
+            ) {
 
             item.tags.ele = (Math.round(eleFeet * metersPerFoot * 1000) / 1000).toString();
             item.tags["ele:accuracy"] = (Math.round(accuracyFeet * metersPerFoot * 10000) / 10000).toString();
@@ -435,7 +443,6 @@ Object.values(allCurrentItems).forEach(item => {
             official_name: officialName,
             ref: item.site_no,
             "website": "https://waterdata.usgs.gov/monitoring-location/" + item.site_no,
-            "man_made": "monitoring_station",
             "operator": "United States Geological Survey",
             "operator:short": "USGS",
             "operator:type": "government",
