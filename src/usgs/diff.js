@@ -1,10 +1,54 @@
 import { readFileSync, writeFileSync } from 'fs';
-import { clearDirectory, lifecyclePrefixes, locHash, osmChangeXmlForFeatures, geoJsonForFeatures, scratchDir, tagDiff } from '../utils.js';
+import { clearDirectory, iterateFilesInDirectory, lifecyclePrefixes, locHash, osmChangeXmlForFeatures, geoJsonForFeatures, scratchDir, tagDiff } from '../utils.js';
 
 clearDirectory(scratchDir + 'usgs/diffed/');
 clearDirectory(scratchDir + 'usgs/diffed/modified/bystate/');
 clearDirectory(scratchDir + 'usgs/diffed/usgs_only/bystate/');
 clearDirectory(scratchDir + 'usgs/diffed/osm_only/');
+
+const webcamKeys = [
+    'contact:webcam',
+    'contact:webcam:1',
+    'contact:webcam:2',
+    'contact:webcam:3',
+    'contact:webcam:4',
+    'contact:webcam:5',
+    'contact:webcam:6',
+    'contact:webcam:7',
+    'contact:webcam:8',
+    'contact:webcam:9',
+    'contact:webcam:10',
+    'contact:webcam:11',
+    'contact:webcam:12',
+    'contact:webcam:13',
+    'contact:webcam:14',
+    'contact:webcam:15',
+];
+
+function cleanupWebcamValues(feature, nwisValues) {
+    const beforeWebcamTags = {};
+    webcamKeys.forEach(function(key) {
+        if (feature.tags[key]) {
+            beforeWebcamTags[key] = feature.tags[key];
+            delete feature.tags[key];
+        }
+    });
+    let cleanedValues = Object.values(beforeWebcamTags).filter(value => nwisValues.includes(value) || !value.startsWith('https://apps.usgs.gov/hivis/camera/'));
+    cleanedValues = Array.from(new Set(cleanedValues.concat(nwisValues)));
+    cleanedValues.forEach(value => addWebcamValue(feature, value));
+
+    const afterWebcamTags = {};
+    webcamKeys.forEach(function(key) {
+        if (feature.tags[key]) afterWebcamTags[key] = feature.tags[key];
+    });
+}
+
+function addWebcamValue(feature, value) {
+    let osmWebcamValues = webcamKeys.map(key => feature.tags[key]).filter(val => val);
+    let suffix = osmWebcamValues.length === 0 ? "" : ":" + osmWebcamValues.length;
+    let targetKey = "contact:webcam" + suffix;
+    feature.tags[targetKey] = value;
+}
 
 const conversionMap = JSON.parse(readFileSync(import.meta.dirname + '/data/monitoring_types.json'));
 
@@ -50,24 +94,6 @@ for (let region in statesByRegion) {
     });
 }
 
-const webcamKeys = [
-    'contact:webcam',
-    'contact:webcam:1',
-    'contact:webcam:2',
-    'contact:webcam:3',
-    'contact:webcam:4',
-    'contact:webcam:5',
-    'contact:webcam:6',
-    'contact:webcam:7',
-    'contact:webcam:8',
-    'contact:webcam:9',
-    'contact:webcam:10',
-    'contact:webcam:11',
-    'contact:webcam:12',
-    'contact:webcam:13',
-    'contact:webcam:14',
-    'contact:webcam:15',
-];
 
 let keysToAddIfMissing = {
     'depth':{},
@@ -97,7 +123,6 @@ const keysToOverwrite = featureTypeTags
     .concat(['official_name']);
 
 const osm = JSON.parse(readFileSync(scratchDir + 'osm/usgs/all.json'));
-const usgs = JSON.parse(readFileSync(scratchDir + 'usgs/formatted/all.geojson'));
 
 let osmByRef = {};
 let osmByLoc = {};
@@ -121,74 +146,31 @@ osm.elements.forEach(function(feature) {
     }
 });
 
-let usgsByRef = {};
-usgs.features.forEach(function(feature) {
-    if (usgsByRef[feature.properties.ref]) console.log('Duplicate USGS elements for: ' + feature.tags.ref);
-    usgsByRef[feature.properties.ref] = feature;
-});
+let usgsRefsSeen = {};
 
-let updated = [];
-let usgsOnlyByState = {};
+await iterateFilesInDirectory(scratchDir + 'usgs/formatted/bystate/', function(result, filename) {
+    const state = filename.slice(0, 2);
+    console.log(`Diffing ${state}...`);
 
-let osmOnlyFeatures = [];
-let usgsOnlyFeatures = [];
-
-let tagsAdded = {};
-let tagsModified = {};
-let tagsDeleted = {};
-
-let addedMissingTags = 0;
-let overwroteIncorrectTags = 0;
-let deletedTagCount = 0;
-
-function cleanupWebcamValues(feature, nwisValues) {
-    const beforeWebcamTags = {};
-    webcamKeys.forEach(function(key) {
-        if (feature.tags[key]) {
-            beforeWebcamTags[key] = feature.tags[key];
-            delete feature.tags[key];
-        }
+    const usgsFeatures = JSON.parse(result).features;
+    const usgsByRefInState = {};
+    usgsFeatures.forEach(function(feature) {
+        usgsRefsSeen[feature.properties.ref] = true;
+        if (usgsByRefInState[feature.properties.ref]) console.log('Duplicate USGS elements for: ' + feature.properties.ref);
+        usgsByRefInState[feature.properties.ref] = feature;
     });
-    let cleanedValues = Object.values(beforeWebcamTags).filter(value => nwisValues.includes(value) || !value.startsWith('https://apps.usgs.gov/hivis/camera/'));
-    cleanedValues = Array.from(new Set(cleanedValues.concat(nwisValues)));
-    cleanedValues.forEach(value => addWebcamValue(feature, value));
 
-    const afterWebcamTags = {};
-    webcamKeys.forEach(function(key) {
-        if (feature.tags[key]) afterWebcamTags[key] = feature.tags[key];
-    });
-}
-
-function addWebcamValue(feature, value) {
-    let osmWebcamValues = webcamKeys.map(key => feature.tags[key]).filter(val => val);
-    let suffix = osmWebcamValues.length === 0 ? "" : ":" + osmWebcamValues.length;
-    let targetKey = "contact:webcam" + suffix;
-    feature.tags[targetKey] = value;
-}
-
-let osmByRefByState = {};
-
-for (let ref in osmByRef) {
-    let osmFeature = osmByRef[ref];
-    let latest = usgsByRef[ref];
-    if (latest) {
-        let key = latest.state ? latest.state : '_nostate';
-        //if (regionsByState[key]) key = regionsByState[key];
-        if (!osmByRefByState[key]) osmByRefByState[key] = {};
-        osmByRefByState[key][ref] = osmFeature;
-    } else {
-        // ignore inactive features like `disused:man_made=monitoring_station`
-        if (osmFeature.tags.man_made === 'monitoring_station') {
-            osmOnlyFeatures.push(osmFeature);
+    const osmByRefInState = {};
+    for (let ref in osmByRef) {
+        if (usgsByRefInState[ref]) {
+            osmByRefInState[ref] = osmByRef[ref];
         }
     }
-}
 
-for (let state in osmByRefByState) {
     let updatedInState = [];
-    for (let ref in osmByRefByState[state]) {
-        let osmFeature = osmByRefByState[state][ref];
-        let latest = usgsByRef[ref];
+    for (let ref in osmByRefInState) {
+        let osmFeature = osmByRefInState[ref];
+        let latest = usgsByRefInState[ref];
 
         let beforeTags = Object.assign({}, osmFeature.tags);
 
@@ -226,63 +208,53 @@ for (let state in osmByRefByState) {
 
         if (Object.keys(diff.added).length || Object.keys(diff.deleted).length) {
             if (updatedInState.length === 0) {
-                console.log(`\n-------------------------------------`);
-                console.log(`Modified features in ${state}:`);
+                console.log(`  To update:`);
             }
             console.log(`  ${osmFeature.tags.name} (${osmFeature.tags.ref}) https://openstreetmap.org/${osmFeature.type}/${osmFeature.id}`);
             for (let key in diff.deleted) {
-                console.log(`    - ${key}=${diff.deleted[key]}`);
+                console.log(`      - ${key}=${diff.deleted[key]}`);
             }
             for (let key in diff.added) {
-                console.log(`    + ${key}=${diff.added[key]}`);
+                console.log(`      + ${key}=${diff.added[key]}`);
             }
             updatedInState.push(osmFeature);
-            updated.push(osmFeature);
         }
     }
     if (updatedInState.length) {
-        writeFileSync(scratchDir + 'usgs/diffed/modified/bystate/' + state + '.osc', osmChangeXmlForFeatures(updatedInState));
-        console.log(`${updatedInState.length} total features modified in ${state}`);
+        writeFileSync(scratchDir + 'usgs/diffed/modified/bystate/' + state + '.osc', osmChangeXmlForFeatures(updatedInState));   
     }
-}
+    console.log(`  ${updatedInState.length} to update`);
 
-for (let ref in usgsByRef) {
-    let usgsFeature = usgsByRef[ref];
-    if (!osmByRef[ref]) {
+    let usgsOnlyFeatures = [];
 
-        let loc = locHash(usgsFeature);
-        if (osmByLoc[loc]) {
-            console.log(`Offsetting coordinates to avoid overlapping nodes: ${ref}`);
-            usgsFeature.geometry.coordinates[0] += 0.00001;
-            loc = locHash(usgsFeature);
+    for (let ref in usgsByRefInState) {
+        let usgsFeature = usgsByRefInState[ref];
+        if (usgsFeature.isActive && !osmByRef[ref]) {
+
+            let loc = locHash(usgsFeature);
+            if (osmByLoc[loc]) {
+                console.log(`Offsetting coordinates to avoid overlapping nodes: ${ref}`);
+                usgsFeature.geometry.coordinates[0] += 0.00001;
+                loc = locHash(usgsFeature);
+            }
+            osmByLoc[loc] = true;
+            usgsOnlyFeatures.push(usgsFeature);
         }
-        osmByLoc[loc] = true;
+    }
+    if (usgsOnlyFeatures.length) {
+        writeFileSync(scratchDir + 'usgs/diffed/usgs_only/bystate/' + state + '.geojson', JSON.stringify(geoJsonForFeatures(usgsOnlyFeatures), null, 2));
+    }
+    console.log(`  ${usgsOnlyFeatures.length} new to add`);
+});
 
-        let key = usgsFeature.state ? usgsFeature.state : '_nostate';
-        delete usgsFeature.state;
-        //if (regionsByState[key]) key = regionsByState[key];
-        if (!usgsOnlyByState[key]) usgsOnlyByState[key] = [];
-        usgsOnlyByState[key].push(usgsFeature);
-        usgsOnlyFeatures.push(usgsFeature);
+let osmOnlyFeatures = [];
+for (let ref in osmByRef) {
+    if (!usgsRefsSeen[ref]) {
+        osmOnlyFeatures.push(osmByRef[ref]);
     }
 }
 
-console.log('Modified, needs upload: ' + updated.length);
-// if (addedMissingTags > 0) console.log(`  Added ${addedMissingTags} tags: ` + Object.keys(tagsAdded).join(', '));
-// if (overwroteIncorrectTags > 0) console.log(`  Overwrote ${overwroteIncorrectTags} tags: ` + Object.keys(tagsModified).join(', '));
-// if (deletedTagCount > 0) console.log(`  Deleted ${deletedTagCount} tags: ` + Object.keys(tagsDeleted).join(', '));
-
-
-//writeFileSync(scratchDir + 'usgs/diffed/modified/all.osc', osmChangeXmlForFeatures(updated));
-
-console.log('In USGS but not OSM, needs review and upload: ' + usgsOnlyFeatures.length);
-
-for (let state in usgsOnlyByState) {
-    writeFileSync(scratchDir + 'usgs/diffed/usgs_only/bystate/' + state + '.geojson', JSON.stringify(geoJsonForFeatures(usgsOnlyByState[state]), null, 2));
-    console.log("  " + state + ": " + usgsOnlyByState[state].length);
+if (osmOnlyFeatures.length) {
+    writeFileSync(scratchDir + 'usgs/diffed/osm_only/all.json', JSON.stringify(osmOnlyFeatures, null, 2));
+    console.log(`${osmOnlyFeatures.length} features in OSM only`);
 }
-//writeFileSync(scratchDir + 'usgs/diffed/usgs_only/all.geojson', JSON.stringify(geoJsonForFeatures(usgsOnlyFeatures), null, 2));
-
-writeFileSync(scratchDir + 'usgs/diffed/osm_only/all.json', JSON.stringify(osmOnlyFeatures, null, 2));
-
-console.log('In OSM but not USGS, needs review: ' + osmOnlyFeatures.length);
