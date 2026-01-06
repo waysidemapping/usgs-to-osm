@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { clearDirectory, iterateFilesInDirectory, lifecyclePrefixes, locHash, osmChangeXmlForFeatures, geoJsonForFeatures, scratchDir, tagDiff } from '../utils.js';
 
+console.log(`Diffing OSM features with USGS source features`);
+
 clearDirectory(scratchDir + 'usgs/diffed/');
 clearDirectory(scratchDir + 'usgs/diffed/modified/bystate/');
 clearDirectory(scratchDir + 'usgs/diffed/usgs_only/bystate/');
@@ -120,7 +122,12 @@ const featureTypeTags = lifecyclePrefixes.map(prefix => `${prefix}man_made`);
 const keysToRemoveIfNotSpecified = featureTypeTags;
 
 const keysToOverwrite = featureTypeTags
-    .concat(['official_name']);
+    .concat([
+        'official_name',
+        // 'shef:location_id',
+        // 'website',
+        // 'website:1'
+    ]);
 
 const osm = JSON.parse(readFileSync(scratchDir + 'osm/usgs/all.json'));
 
@@ -221,9 +228,9 @@ await iterateFilesInDirectory(scratchDir + 'usgs/formatted/bystate/', function(r
         }
     }
     if (updatedInState.length) {
-        writeFileSync(scratchDir + 'usgs/diffed/modified/bystate/' + state + '.osc', osmChangeXmlForFeatures(updatedInState));   
+        writeFileSync(scratchDir + 'usgs/diffed/modified/bystate/' + state + '.osc', osmChangeXmlForFeatures(updatedInState));
+        console.log(`  ${updatedInState.length} to update`);
     }
-    console.log(`  ${updatedInState.length} to update`);
 
     let usgsOnlyFeatures = [];
 
@@ -243,8 +250,8 @@ await iterateFilesInDirectory(scratchDir + 'usgs/formatted/bystate/', function(r
     }
     if (usgsOnlyFeatures.length) {
         writeFileSync(scratchDir + 'usgs/diffed/usgs_only/bystate/' + state + '.geojson', JSON.stringify(geoJsonForFeatures(usgsOnlyFeatures), null, 2));
+        console.log(`  ${usgsOnlyFeatures.length} new to add`);
     }
-    console.log(`  ${usgsOnlyFeatures.length} new to add`);
 });
 
 let osmOnlyFeatures = [];
@@ -256,5 +263,7 @@ for (let ref in osmByRef) {
 
 if (osmOnlyFeatures.length) {
     writeFileSync(scratchDir + 'usgs/diffed/osm_only/all.json', JSON.stringify(osmOnlyFeatures, null, 2));
-    console.log(`${osmOnlyFeatures.length} features in OSM only`);
+    console.log(`${osmOnlyFeatures.length} features in OSM only, require manual review`);
 }
+
+console.log(`Diffing complete!`);
