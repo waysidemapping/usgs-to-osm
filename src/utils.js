@@ -145,8 +145,11 @@ export function osmChangeXmlForFeatures(features) {
   function xmlForFeature(feature) {
     let xml = '';
     let tagsString = '';
-    for (let key in feature.tags) {
-      tagsString += `<tag k="${key}" v="${feature.tags[key].replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;')}"/>\n`;
+    let tags = feature.tags;
+    for (let key in tags) {
+      if (typeof(tags[key]) === 'string') {
+        tagsString += `<tag k="${key}" v="${tags[key].replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;')}"/>\n`;
+      }
     }
     if (feature.type === 'node') {
       xml = `<node id="${feature.id}" version="${feature.version}" lat="${feature.lat}" lon="${feature.lon}">\n`;
