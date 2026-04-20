@@ -17,7 +17,7 @@ export async function iterateFilesInDirectory(dir, withFunction) {
 }
 
 export function clearDirectory(dir) {
-  if (existsSync(dir)) readdirSync(dir).forEach(f => rmSync(`${dir}${f}`, { recursive: true }));
+  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 

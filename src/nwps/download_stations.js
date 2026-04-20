@@ -1,10 +1,14 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { getString, clearDirectory, scratchDir } from '../utils.js';
 
 // https://api.water.noaa.gov/nwps/v1/docs/#/
 
+const baseDir = scratchDir + 'nwps/full/';
+
 // Don't delete existing since these are time-intensive to query and the data we care about doesn't change much
-// clearDirectory(scratchDir + 'nwps/full/');
+// clearDirectory(baseDir);
+
+if (!existsSync(baseDir)) mkdirSync(baseDir, { recursive: true });
 
 console.log('Fetching National Water Prediction Service stations. This may take quite awhile…');
 
@@ -13,7 +17,7 @@ const indexGauges = JSON.parse(readFileSync(scratchDir + 'nwps/index/all.json'))
 for (let i in indexGauges) {
     let indexGauge = indexGauges[i];
     let id = indexGauge.lid;
-    const localPath = scratchDir + `nwps/full/${id}.json`;
+    const localPath = `${baseDir}${id}.json`;
 
     if (existsSync(localPath)) continue;
 
@@ -27,5 +31,4 @@ for (let i in indexGauges) {
     } else {
         console.log(`No string returned`);
     }
-
 }
