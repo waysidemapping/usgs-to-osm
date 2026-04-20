@@ -13,7 +13,7 @@ const definitions = {
     'indego': {
         // https://www.rideindego.com/stations/
         sourceFileUrl: `https://bts-status.bicycletransit.workers.dev/phl`,
-        overpassQuery: lifecyclePrefixes.map(prefix => `node["${prefix}amenity"="bicycle_rental"]["network:wikidata"="Q19876452"];`).join('\n'),
+        overpassQuery: "(" + lifecyclePrefixes.map(prefix => `node["${prefix}amenity"="bicycle_rental"]["network:wikidata"="Q19876452"];`).join('\n') + ");",
         filter: function(item) {
             return !item.properties.isEventBased && !item.properties.isVirtual;
         },
@@ -92,7 +92,7 @@ const definitions = {
     },
     'rtc-bike-share': {
         sourceFileUrl: `https://bts-status.bicycletransit.workers.dev/las`,
-        overpassQuery: lifecyclePrefixes.map(prefix => `node["${prefix}amenity"="bicycle_rental"]["network:wikidata"="Q104727968"];`).join('\n'),
+        overpassQuery: "(" + lifecyclePrefixes.map(prefix => `node["${prefix}amenity"="bicycle_rental"]["network:wikidata"="Q104727968"];`).join('\n') + ");",
         tags: function(item) {
             return {
                 "name": formatString(item.properties.name),

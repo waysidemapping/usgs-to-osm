@@ -116,9 +116,7 @@ export async function fetchOsmData(id, queryInner) {
 
   const query = `
   [out:json][timeout:300];
-  (
   ${queryInner}
-  );
   (._;); out meta;
   `;
 
