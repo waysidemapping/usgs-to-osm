@@ -162,6 +162,13 @@ export function osmChangeXmlForFeatures(features) {
         xml += `<nd ref="${feature.nodes[i]}"/>\n`;
       }
       xml += '</way>\n';
+    } else if (feature.type === 'relation') {
+      xml = `<relation id="${feature.id}" version="${feature.version}">\n`;
+      xml += tagsString;
+      for (let i in feature.members) {
+        xml += `<member type="${feature.members[i].type}" ref="${feature.members[i].ref}" role="${feature.members[i].role}"/>\n`;
+      }
+      xml += '</relation>\n';
     } else {
       console.log(`⚠️ Skipping change XML for feature ${feature.id} with unknown type ${feature.type}`);
     }
